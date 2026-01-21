@@ -5,7 +5,7 @@ import pydeck as pdk
 
 # --- ページ設定 ---
 st.set_page_config(page_title="全国気温 3D Map", layout="wide")
-st.title("日本全国の現在の気温 3Dカラムマップ")
+st.title("日本全国の現在の気温 3Dカラムマップ（時刻付き）")
 
 # 日本全国47都道府県庁所在地のデータ
 prefectural_capitals = {
@@ -41,7 +41,7 @@ def fetch_weather_data():
     weather_info = []
     BASE_URL = 'https://api.open-meteo.com/v1/forecast'
     
-    # プログレスバーの表示（地点数が多いので）
+    # プログレスバーの表示
     progress_bar = st.progress(0)
     total_cities = len(prefectural_capitals)
     
@@ -49,27 +49,32 @@ def fetch_weather_data():
         params = {
             'latitude':  coords['lat'],
             'longitude': coords['lon'],
-            'current': 'temperature_2m'
-            # timezoneパラメータと時刻取得処理を削除しました
+            'current': 'temperature_2m',
+            'timezone': 'Asia/Tokyo'  # <--- 日本時間を指定
         }
         try:
-            response = requests.get(BASE_URL, params=params)
+            # タイムアウトを設定して通信詰まりを防止
+            response = requests.get(BASE_URL, params=params, timeout=5)
             response.raise_for_status()
             data = response.json()
+            
+            # 時刻データの整形 (Tをスペースに)
+            time_str = data['current']['time'].replace('T', ' ')
+
             weather_info.append({
                 'City': city,
                 'lat': coords['lat'],
                 'lon': coords['lon'],
-                'Temperature': data['current']['temperature_2m']
+                'Temperature': data['current']['temperature_2m'],
+                'Time': time_str  # <--- データに時刻を追加
             })
         except Exception as e:
-            # エラーが出ても止まらずに進むようにする
             print(f"Error fetching {city}: {e}")
         
         # プログレスバーの更新
         progress_bar.progress((i + 1) / total_cities)
             
-    progress_bar.empty() # 完了したらバーを消す
+    progress_bar.empty()
     return pd.DataFrame(weather_info)
 
 # データの取得
@@ -80,13 +85,13 @@ with st.spinner('日本全国の気温データを取得中...'):
 df['elevation'] = df['Temperature'] * 3000
 
 # --- メインレイアウト ---
-col1, col2 = st.columns([1, 3]) # 地図をより大きく見せるため比率を変更
+col1, col2 = st.columns([1, 3])
 
 with col1:
     st.subheader("全国の気温")
-    # 高さ調整を行い、スクロール可能な表にする
+    # 表に Time 列を追加
     st.dataframe(
-        df[['City', 'Temperature']], 
+        df[['City', 'Temperature', 'Time']], 
         use_container_width=True,
         height=600 
     )
@@ -98,11 +103,10 @@ with col1:
 with col2:
     st.subheader("3D カラムマップ")
 
-    # Pydeck の設定（日本全体が見えるように視点を変更）
     view_state = pdk.ViewState(
-        latitude=36.0,    # 日本の中心付近
-        longitude=138.0,  
-        zoom=4.5,         # 全国が入るようにズームアウト
+        latitude=36.0,
+        longitude=138.0,
+        zoom=4.5,
         pitch=45,
         bearing=0
     )
@@ -112,18 +116,18 @@ with col2:
         data=df,
         get_position='[lon, lat]',
         get_elevation='elevation',
-        radius=10000,      # 全国規模だと重なるため、半径を少し小さく調整(12km->10km)
+        radius=10000,
         get_fill_color='[255, 100, 0, 180]',
         pickable=True,
         auto_highlight=True,
     )
 
-    # 描画
     st.pydeck_chart(pdk.Deck(
         layers=[layer],
         initial_view_state=view_state,
         tooltip={
-            "html": "<b>{City}</b><br>気温: {Temperature}°C",
+            # ツールチップにも時刻を追加
+            "html": "<b>{City}</b><br>気温: {Temperature}°C<br>時刻: {Time}",
             "style": {"color": "white"}
         }
     ))
